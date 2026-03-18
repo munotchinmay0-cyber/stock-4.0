@@ -3275,10 +3275,10 @@ function deleteStockDeposit(id) {
 function openAddBrokerModal() { showToast('Custom brokers: use the Zerodha/Groww/Upstox options above'); }
 
 // ─── Stock PDF/CSV Statement Import ───
-let spState = { step:1, rawText:'', rows:[], preview:[], broker:'groww' };
+let spState = { step:1, rawText:'', rows:[], preview:[], broker:'groww', priceIsTotal:false };
 
 function openStockPdfModal() {
-  spState = { step:1, rawText:'', rows:[], preview:[], broker:'groww' };
+  spState = { step:1, rawText:'', rows:[], preview:[], broker:'groww', priceIsTotal:false };
   document.getElementById('stockPdfOverlay').classList.add('open');
   renderSpStep();
 }
@@ -3372,7 +3372,7 @@ function renderSpStep() {
           ['type','Buy / Sell'],
           ['date','Trade Date'],
           ['qty','Quantity'],
-          ['price','Price per Share'],
+          ['price','Price / Value column'],
         ].map(([f,lbl])=>`<tr>
           <td><div class="map-field-name">${lbl}</div><span class="map-field-req">required</span></td>
           <td>
@@ -3381,7 +3381,26 @@ function renderSpStep() {
           </td>
           <td></td>
         </tr>`).join('')}
-      </tbody></table>`;
+      </tbody></table>
+
+      <div style="margin-top:14px;background:rgba(255,215,0,0.08);border:1px solid rgba(255,215,0,0.25);border-radius:10px;padding:12px 14px;">
+        <div style="font-size:11px;font-weight:600;color:var(--stock-accent);margin-bottom:8px;">💡 What does your price column contain?</div>
+        <div style="display:flex;gap:8px;">
+          <label style="flex:1;background:var(--stock-card);border:2px solid ${!spState.priceIsTotal?'var(--stock-accent)':'var(--stock-border)'};border-radius:8px;padding:10px;cursor:pointer;text-align:center;" onclick="spState.priceIsTotal=false;renderSpStep()">
+            <div style="font-size:13px;font-weight:700;color:var(--stock-text)">₹ Per Share</div>
+            <div style="font-size:10px;color:var(--stock-muted);margin-top:3px">e.g. ₹248.15<br><em>price of one share</em></div>
+          </label>
+          <label style="flex:1;background:var(--stock-card);border:2px solid ${spState.priceIsTotal?'var(--stock-accent)':'var(--stock-border)'};border-radius:8px;padding:10px;cursor:pointer;text-align:center;" onclick="spState.priceIsTotal=true;renderSpStep()">
+            <div style="font-size:13px;font-weight:700;color:var(--stock-text)">₹ Total Value</div>
+            <div style="font-size:10px;color:var(--stock-muted);margin-top:3px">e.g. ₹2,481.50<br><em>qty × price together</em></div>
+          </label>
+        </div>
+        <div style="font-size:10px;color:var(--stock-muted);margin-top:8px;line-height:1.6;">
+          ${spState.priceIsTotal
+            ? '✅ <strong style="color:var(--stock-accent)">Total Value selected</strong> — we will divide by quantity to get per-share price automatically.'
+            : '⚠️ <strong style="color:var(--stock-text)">Groww\'s "value" column = Total Value</strong> (qty × price). If prices look too high, switch to Total Value.'}
+        </div>
+      </div>`;
     footer.innerHTML = `
       <button class="import-btn-secondary" onclick="setSpStep(1)">← Back</button>
       <button class="import-btn-primary" onclick="spBuildPreview()">Preview →</button>`;
@@ -3588,16 +3607,20 @@ function spBuildPreview() {
   const m = spState;
   const preview = [];
   m.rows.forEach((row,idx) => {
-    const symbol = (row[m.mapping_symbol]||'').trim().toUpperCase().replace(/\s+/g,'');
+    const symbol  = (row[m.mapping_symbol]||'').trim().toUpperCase().replace(/[^A-Z0-9]/g,'');
     const typeRaw = (row[m.mapping_type]||'').toLowerCase();
-    const type = typeRaw.includes('sell')||typeRaw==='s'||typeRaw==='sell' ? 'sell' : 'buy';
+    const type    = typeRaw.includes('sell')||typeRaw==='s' ? 'sell' : 'buy';
     const dateStr = normalizeDate((row[m.mapping_date]||'').trim());
-    const qty = parseFloat((row[m.mapping_qty]||'').replace(/,/g,''));
-    const price = parseFloat((row[m.mapping_price]||'').replace(/[₹,]/g,''));
+    const qty     = parseFloat((row[m.mapping_qty]||'').replace(/,/g,''));
+    const rawVal  = parseFloat((row[m.mapping_price]||'').replace(/[₹,\s]/g,''));
+
+    // If user said "total value" column, divide by qty to get per-share price
+    const price   = m.priceIsTotal ? (rawVal / qty) : rawVal;
+
     if (!symbol||!dateStr||isNaN(qty)||qty<=0||isNaN(price)||price<=0) {
       preview.push({_err:`Row ${idx+2}: invalid data`, _raw:row}); return;
     }
-    preview.push({ id:'sp_'+Date.now()+idx, type, broker:m.broker, symbol, date:dateStr, qty, price, charges:0, note:'Imported from statement', depositId:'' });
+    preview.push({ id:'sp_'+Date.now()+idx, type, broker:m.broker, symbol, date:dateStr, qty, price: parseFloat(price.toFixed(2)), charges:0, note:'Imported from statement', depositId:'' });
   });
   spState.preview = preview;
   setSpStep(3);
